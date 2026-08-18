@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>杨博文家通行证 · 后台管理</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #FBF3EF;
+    color: #3A2230;
+    padding: 20px;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 20px; margin-bottom: 20px; }
+  h2 { font-size: 16px; margin: 24px 0 10px; color: #8E2C48; }
+  .card {
+    background: #fff;
+    border: 1px solid #E3C9C4;
+    border-radius: 14px;
+    padding: 18px;
+    margin-bottom: 16px;
+  }
+  label { font-size: 12px; color: #8B6470; display:block; margin-top:10px; }
+  input, select {
+    width: 100%;
+    padding: 10px;
+    margin-top: 4px;
+    border: 1px solid #E3C9C4;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+  }
+  button {
+    background: #B33B5E;
+    color: #fff;
+    border: none;
+    padding: 12px 0;
+    width: 100%;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 700;
+    margin-top: 14px;
+    cursor: pointer;
+  }
+  button.secondary {
+    background: transparent;
+    color: #B33B5E;
+    border: 1px solid #B33B5E;
+  }
+  .row { display:flex; gap:8px; align-items:flex-end; }
+  .row > div { flex:1; }
+  .list-item {
+    padding: 10px 0;
+    border-bottom: 1px solid #F0E0DC;
+    font-size: 13px;
+    display:flex;
+    justify-content: space-between;
+  }
+  .list-item:last-child { border-bottom:none; }
+  .status-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 100px;
+    background: #F6DDE4;
+    color: #8E2C48;
+  }
+  #app { display:none; }
+  #login-box { display:block; }
+  .hint { font-size: 11px; color: #C7ADB4; margin-top:6px; }
+  .msg { font-size: 12px; margin-top: 10px; }
+  .msg.error { color: #C0392B; }
+  .msg.success { color: #2E8B57; }
+</style>
+</head>
+<body>
+
+<h1>杨博文家通行证 · 后台管理</h1>
+
+<!-- 登录区 -->
+<div id="login-box" class="card">
+  <h2 style="margin-top:0">管理员登录</h2>
+  <label>邮箱</label>
+  <input id="login-email" type="email" placeholder="管理员邮箱">
+  <label>密码</label>
+  <input id="login-password" type="password" placeholder="密码">
+  <button onclick="doLogin()">登录</button>
+  <div id="login-msg" class="msg"></div>
+  <div class="hint">首次使用请联系开发者创建管理员账号</div>
+</div>
+
+<!-- 管理后台主体 -->
+<div id="app">
+  <div class="card">
+    <span id="who"></span>
+    <button class="secondary" onclick="doLogout()">退出登录</button>
+  </div>
+
+  <h2>新建活动</h2>
+  <div class="card">
+    <label>活动名称</label>
+    <input id="new-activity-name" placeholder="比如：第肆象限">
+    <label>副标题（选填）</label>
+    <input id="new-activity-subtitle" placeholder="比如：2026巡回演唱会·南京站">
+    <label>状态</label>
+    <select id="new-activity-status">
+      <option value="upcoming">未开始</option>
+      <option value="active">进行中（会显示给用户）</option>
+      <option value="archived">已归档</option>
+    </select>
+    <button onclick="createActivity()">保存新活动</button>
+    <div id="activity-msg" class="msg"></div>
+  </div>
+
+  <h2>已有活动</h2>
+  <div class="card" id="activity-list">
+    <div class="hint">加载中...</div>
+  </div>
+
+  <div class="card" id="detail-panel" style="display:none">
+    <h2 style="margin-top:0" id="detail-title">场次 &amp; 分区管理</h2>
+
+    <label>添加场次日期</label>
+    <div class="row">
+      <div><input id="new-show-date" type="date"></div>
+      <div><input id="new-show-label" placeholder="标签，如 08.14场"></div>
+    </div>
+    <button onclick="addShowDate()">添加场次</button>
+    <div id="show-list"></div>
+
+    <label style="margin-top:20px">添加分区票价</label>
+    <div class="row">
+      <div><input id="new-section-name" placeholder="分区名，如 二层西03区"></div>
+      <div><input id="new-section-price" type="number" placeholder="票价"></div>
+    </div>
+    <button onclick="addSection()">添加分区</button>
+    <div id="section-list"></div>
+  </div>
+</div>
+
+<script>
+  const SUPABASE_URL = "https://lhgxoxjetnbfflkklbet.supabase.co";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxoZ3hveGpldG5iZmZsa2tsYmV0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwNjE4OTAsImV4cCI6MjEwMjYzNzg5MH0.3udJX1QEWwIBKLIh-2YlXN4YaU2wkfD58zAOfgRMxDY";
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  let currentActivityId = null;
+
+  async function doLogin() {
+    const email = document.getElementById('login-email').value.trim();
+    const password = document.getElementById('login-password').value;
+    const msg = document.getElementById('login-msg');
+    msg.textContent = '登录中...';
+    msg.className = 'msg';
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) {
+      msg.textContent = '登录失败：' + error.message;
+      msg.className = 'msg error';
+      return;
+    }
+    await checkAdminAndEnter();
+  }
+
+  async function checkAdminAndEnter() {
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) return;
+    const { data: profile, error } = await sb.from('profiles').select('is_admin, nickname').eq('id', user.id).single();
+    if (error || !profile || !profile.is_admin) {
+      document.getElementById('login-msg').textContent = '此账号不是管理员，无法进入后台';
+      document.getElementById('login-msg').className = 'msg error';
+      await sb.auth.signOut();
+      return;
+    }
+    document.getElementById('login-box').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+    document.getElementById('who').textContent = '当前登录：' + user.email;
+    loadActivities();
+  }
+
+  async function doLogout() {
+    await sb.auth.signOut();
+    location.reload();
+  }
+
+  async function createActivity() {
+    const name = document.getElementById('new-activity-name').value.trim();
+    const subtitle = document.getElementById('new-activity-subtitle').value.trim();
+    const status = document.getElementById('new-activity-status').value;
+    const msg = document.getElementById('activity-msg');
+    if (!name) { msg.textContent = '请填写活动名称'; msg.className='msg error'; return; }
+    const { error } = await sb.from('activities').insert({ name, subtitle, status });
+    if (error) { msg.textContent = '保存失败：' + error.message; msg.className='msg error'; return; }
+    msg.textContent = '已保存！'; msg.className='msg success';
+    document.getElementById('new-activity-name').value = '';
+    document.getElementById('new-activity-subtitle').value = '';
+    loadActivities();
+  }
+
+  async function loadActivities() {
+    const { data, error } = await sb.from('activities').select('*').order('created_at', { ascending: false });
+    const box = document.getElementById('activity-list');
+    if (error) { box.innerHTML = '<div class="hint">加载失败：' + error.message + '</div>'; return; }
+    if (!data.length) { box.innerHTML = '<div class="hint">还没有活动，先在上面新建一个</div>'; return; }
+    const statusText = { upcoming: '未开始', active: '进行中', archived: '已归档' };
+    box.innerHTML = data.map(a => `
+      <div class="list-item">
+        <span onclick="openDetail('${a.id}', '${a.name.replace(/'/g,"\\'")}')" style="cursor:pointer">
+          ${a.name} <span class="status-badge">${statusText[a.status] || a.status}</span>
+        </span>
+      </div>
+    `).join('');
+  }
+
+  async function openDetail(id, name) {
+    currentActivityId = id;
+    document.getElementById('detail-panel').style.display = 'block';
+    document.getElementById('detail-title').textContent = name + ' · 场次与分区';
+    loadShowDates();
+    loadSections();
+    document.getElementById('detail-panel').scrollIntoView({ behavior: 'smooth' });
+  }
+
+  async function addShowDate() {
+    const show_date = document.getElementById('new-show-date').value;
+    const label = document.getElementById('new-show-label').value.trim();
+    if (!show_date || !currentActivityId) return;
+    await sb.from('show_dates').insert({ activity_id: currentActivityId, show_date, label });
+    document.getElementById('new-show-date').value = '';
+    document.getElementById('new-show-label').value = '';
+    loadShowDates();
+  }
+
+  async function loadShowDates() {
+    const { data } = await sb.from('show_dates').select('*').eq('activity_id', currentActivityId).order('show_date');
+    document.getElementById('show-list').innerHTML = (data || []).map(d => `
+      <div class="list-item"><span>${d.show_date} ${d.label ? '· ' + d.label : ''}</span></div>
+    `).join('');
+  }
+
+  async function addSection() {
+    const section_name = document.getElementById('new-section-name').value.trim();
+    const price = document.getElementById('new-section-price').value;
+    if (!section_name || !currentActivityId) return;
+    await sb.from('seat_sections').insert({ activity_id: currentActivityId, section_name, price: price || null });
+    document.getElementById('new-section-name').value = '';
+    document.getElementById('new-section-price').value = '';
+    loadSections();
+  }
+
+  async function loadSections() {
+    const { data } = await sb.from('seat_sections').select('*').eq('activity_id', currentActivityId).order('sort_order');
+    document.getElementById('section-list').innerHTML = (data || []).map(s => `
+      <div class="list-item"><span>${s.section_name}</span><span>¥${s.price ?? '-'}</span></div>
+    `).join('');
+  }
+
+  // 页面加载时检查是否已登录
+  sb.auth.getSession().then(({ data: { session } }) => {
+    if (session) checkAdminAndEnter();
+  });
+</script>
+
+</body>
+</html>
