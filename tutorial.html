@@ -136,8 +136,8 @@ header { display: flex; flex-direction: column; gap: 14px; }
 .copy:hover { background: #222a38; }
 
 /* Callouts */
-.note { border-radius: 10px; padding: 12px 14px; font-size: 15px; display: flex; flex-direction: column; gap: 6px; }
-.note strong { font-weight: 700; }
+.note { border-radius: 10px; padding: 12px 14px; font-size: 15px; }
+.note strong { font-weight: 700; display: block; margin-bottom: 4px; }
 .note.warn { background: var(--warn-soft); color: var(--ink); }
 .note.warn strong { color: var(--warn); }
 .note.tip { background: var(--accent-soft); }
@@ -179,7 +179,7 @@ td:first-child { white-space: nowrap; font-family: var(--font-mono); font-size: 
 .push li { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
 .push li.top { border-color: var(--hot); background: var(--hot-soft); }
 details { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
-details + details { margin-top: 8px; }
+#s-faq details { margin-top: 8px; }
 summary { cursor: pointer; padding: 12px 14px; font-weight: 500; list-style-position: outside; margin-left: 18px; }
 details > div { padding: 0 14px 14px 32px; color: var(--muted); }
 
@@ -384,7 +384,7 @@ body { margin: 0; }
       <li><span class="when">提前</span><span>抓包拿到新商品的 goodsId：在 App 里点进商品页，在抓到的请求里找 <code>getShelvesSku/数字</code>，那串数字就是编号。填进 <code>goods_ids</code>，<code>interval_seconds</code> 改成 <code>1</code>（一秒查一次）。</span></li>
       <li><span class="when">上架前 5 分钟</span><span>启动程序。还没上架、查不到时会显示红色错误，这是正常的，程序会一直重试，上架后自动开始记录。</span></li>
       <li><span class="when">上架后</span><span>打开 <code>data</code> 文件夹里的 <code>events.csv</code>，找“字段”一栏是 <code>hotSell</code> 的行：哪个款、从几变成几、在哪两个时间之间变的。</span></li>
-      <li><span class="when">看够了</span><span>按 <kbd>Ctrl</kbd>/<kbd>Control</kbd> + <kbd>C</kbd> 停止。第一次建议多跑 1～2 小时，摸清热度一般多久出现。</span></li>
+      <li><span class="when">看够了</span><span>按 <kbd class="only-win">Ctrl</kbd><kbd class="only-mac">Control</kbd> + <kbd>C</kbd> 停止。第一次建议多跑 1～2 小时，摸清热度一般多久出现。</span></li>
     </ol>
   </section>
 
@@ -445,12 +445,12 @@ body { margin: 0; }
     <div>
       <details><summary>提示“找不到 config.json”</summary><div>文件名不对。确认是 <code>config.json</code>，不是 <code>config.json.txt</code>。Windows 打开“文件扩展名”显示就能看出来；Mac 右键 → 显示简介，看“名称与扩展名”。</div></details>
       <details><summary>提示“config.json 格式有误”</summary><div>多半是用了中文引号、中文逗号，或者少了逗号。对照上面的示例检查一遍。</div></details>
-      <details><summary>提示“pip 不是内部或外部命令”（Windows）</summary><div>安装 Python 时没勾选 “Add Python to PATH”。重新运行安装包，选 Modify 或卸载后重装，并勾上这个选项。</div></details>
-      <details><summary>提示 No such file or directory（Mac）</summary><div>“运行”那一步的 <code>cd</code> 没进入正确的文件夹。重新输入 <code>cd</code> 加空格，再拖一次文件夹。</div></details>
-      <details><summary>Mac 弹窗要安装“命令行开发者工具”</summary><div>说明官网的 Python 没装好，重新安装 <code>.pkg</code> 安装包。</div></details>
+      <details class="only-win"><summary>提示“pip 不是内部或外部命令”</summary><div>安装 Python 时没勾选 “Add Python to PATH”。重新运行安装包，选 Modify 或卸载后重装，并勾上这个选项。</div></details>
+      <details class="only-mac"><summary>提示 No such file or directory</summary><div>“运行”那一步的 <code>cd</code> 没进入正确的文件夹。重新输入 <code>cd</code> 加空格，再拖一次文件夹。</div></details>
+      <details class="only-mac"><summary>弹窗要安装“命令行开发者工具”</summary><div>说明官网的 Python 没装好，重新安装 <code>.pkg</code> 安装包。</div></details>
       <details><summary>一直显示“网络错误”</summary><div>检查电脑能不能上网。网络恢复后程序会自动继续。</div></details>
       <details><summary>显示“HTTP 429 被限流”</summary><div>请求太频繁了，程序会自动等 5 分钟再试，不用管。</div></details>
-      <details><summary>改了 config.json 但没生效</summary><div>需要先停止程序（<kbd>Ctrl</kbd>/<kbd>Control</kbd> + <kbd>C</kbd>），再重新运行。</div></details>
+      <details><summary>改了 config.json 但没生效</summary><div>需要先停止程序（<kbd class="only-win">Ctrl</kbd><kbd class="only-mac">Control</kbd> + <kbd>C</kbd>），再重新运行。</div></details>
     </div>
   </section>
 
