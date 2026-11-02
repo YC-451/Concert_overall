@@ -1,5 +1,9 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>商城款式监控教程</title>
-<meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@700;900&family=JetBrains+Mono:wght@400;600&display=swap">
@@ -59,7 +63,7 @@ h3 { font-size: 18px; font-family: var(--font-body); font-weight: 700; }
 p { margin: 0; }
 a { color: var(--accent); }
 code, kbd { font-family: var(--font-mono); font-size: .9em; }
-code { background: var(--accent-soft); padding: 1px 6px; border-radius: 4px; word-break: break-all; }
+code { background: var(--accent-soft); padding: 1px 6px; border-radius: 4px; overflow-wrap: anywhere; }
 kbd {
   border: 1px solid var(--line); border-bottom-width: 2px; background: var(--surface);
   padding: 0 6px; border-radius: 4px; white-space: nowrap;
@@ -191,8 +195,10 @@ footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line)
 @media (prefers-reduced-motion: no-preference) {
   .step { transition: border-color .2s; }
 }
+body { margin: 0; }
 </style>
-
+</head>
+<body>
 <div class="wrap os-win" id="app">
 
   <header>
@@ -210,7 +216,7 @@ footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line)
   <section aria-labelledby="s-setup">
     <span class="eyebrow">第一部分</span>
     <h2 id="s-setup">准备和运行</h2>
-    <p>先选你的电脑系统，下面的步骤会跟着变。第 1～4 步只需要做一次。</p>
+    <p>先选你的电脑系统，下面的步骤会跟着变。标着“一次”的步骤只需要做一次，以后每次只做最后的“运行”。</p>
     <div class="switch" role="group" aria-label="选择电脑系统">
       <button type="button" id="btn-win" data-os="win" aria-pressed="true">Windows</button>
       <button type="button" id="btn-mac" data-os="mac" aria-pressed="false">Mac</button>
@@ -504,3 +510,5 @@ footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line)
   });
 })();
 </script>
+</body>
+</html>
