@@ -290,7 +290,7 @@ footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line)
               <tbody>
                 <tr><td>token</td><td>留空即可。以后程序提示 401/403 时，再把登录凭证粘贴到两个引号中间。</td></tr>
                 <tr><td>goods_ids</td><td>要看的商品编号，多个用英文逗号隔开，例如 <code>[1891, 1193]</code>。</td></tr>
-                <tr><td>interval_seconds</td><td>几秒查一次。平时填 60，新品上架时填 10（最少 10）。</td></tr>
+                <tr><td>interval_seconds</td><td>几秒查一次。平时填 60；新品上架前后填 1（一秒一次），看完改回 60。</td></tr>
                 <tr><td>bark_key</td><td>想收到手机推送就填 Bark App 里的 key，不需要就留空。</td></tr>
               </tbody>
             </table>
@@ -375,7 +375,7 @@ footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line)
     <h2 id="s-launch">新品上架时怎么用</h2>
     <p>只想知道新商品哪个款先变热、什么时候变热的话，只需要在上架前后跑一段时间。</p>
     <ol class="timeline">
-      <li><span class="when">提前</span><span>抓包拿到新商品的 goodsId：在 App 里点进商品页，在抓到的请求里找 <code>getShelvesSku/数字</code>，那串数字就是编号。填进 <code>goods_ids</code>，<code>interval_seconds</code> 改成 <code>10</code>。</span></li>
+      <li><span class="when">提前</span><span>抓包拿到新商品的 goodsId：在 App 里点进商品页，在抓到的请求里找 <code>getShelvesSku/数字</code>，那串数字就是编号。填进 <code>goods_ids</code>，<code>interval_seconds</code> 改成 <code>1</code>（一秒查一次）。</span></li>
       <li><span class="when">上架前 5 分钟</span><span>启动程序。还没上架、查不到时会显示红色错误，这是正常的，程序会一直重试，上架后自动开始记录。</span></li>
       <li><span class="when">上架后</span><span>打开 <code>data</code> 文件夹里的 <code>events.csv</code>，找“字段”一栏是 <code>hotSell</code> 的行：哪个款、从几变成几、在哪两个时间之间变的。</span></li>
       <li><span class="when">看够了</span><span>按 <kbd>Ctrl</kbd>/<kbd>Control</kbd> + <kbd>C</kbd> 停止。第一次建议多跑 1～2 小时，摸清热度一般多久出现。</span></li>

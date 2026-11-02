@@ -219,7 +219,7 @@ def load_config():
 
     interval = cfg.get("interval_seconds") or 60
     try:
-        interval = max(10, int(interval))   # 最少 10 秒，防止误填太小
+        interval = max(1, int(interval))    # 最少 1 秒，防止误填 0 或负数
     except (TypeError, ValueError):
         interval = 60
 
