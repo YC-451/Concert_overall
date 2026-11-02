@@ -1,0 +1,506 @@
+<title>商城款式监控教程</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@700;900&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one readable column, like a printed step-by-step card; OS switch picks which steps show. */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --ink: #1d2433;
+  --muted: #5d6679;
+  --line: #dfe3ea;
+  --accent: #2f5bd3;
+  --accent-soft: #e6ecfb;
+  --hot: #e0611a;
+  --hot-soft: #fdeee4;
+  --ok: #1f8a5b;
+  --ok-soft: #e3f4ec;
+  --warn: #9a6400;
+  --warn-soft: #fbf1db;
+  --term-bg: #151a24;
+  --term-fg: #d7dce6;
+  --font-display: "Noto Serif SC", "Songti SC", "SimSun", serif;
+  --font-body: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11151d; --surface: #191f2a; --ink: #e6e9f0; --muted: #9aa3b5; --line: #2c3442;
+    --accent: #87a6ff; --accent-soft: #1f2a45; --hot: #ff8c4a; --hot-soft: #3a2418;
+    --ok: #5cc994; --ok-soft: #173326; --warn: #e8b55a; --warn-soft: #362a12;
+    --term-bg: #0b0e14; --term-fg: #d7dce6; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11151d; --surface: #191f2a; --ink: #e6e9f0; --muted: #9aa3b5; --line: #2c3442;
+  --accent: #87a6ff; --accent-soft: #1f2a45; --hot: #ff8c4a; --hot-soft: #3a2418;
+  --ok: #5cc994; --ok-soft: #173326; --warn: #e8b55a; --warn-soft: #362a12;
+  --term-bg: #0b0e14; --term-fg: #d7dce6; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 16px; line-height: 1.75;
+}
+.wrap {
+  max-width: 760px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 72px;
+  display: flex; flex-direction: column; gap: 44px;
+}
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; line-height: 1.3; }
+h1 { font-size: clamp(30px, 6vw, 42px); font-weight: 900; }
+h2 { font-size: 24px; font-weight: 700; }
+h3 { font-size: 18px; font-family: var(--font-body); font-weight: 700; }
+p { margin: 0; }
+a { color: var(--accent); }
+code, kbd { font-family: var(--font-mono); font-size: .9em; }
+code { background: var(--accent-soft); padding: 1px 6px; border-radius: 4px; word-break: break-all; }
+kbd {
+  border: 1px solid var(--line); border-bottom-width: 2px; background: var(--surface);
+  padding: 0 6px; border-radius: 4px; white-space: nowrap;
+}
+section { display: flex; flex-direction: column; gap: 16px; }
+.eyebrow { font-size: 13px; letter-spacing: .12em; color: var(--muted); font-weight: 500; }
+
+/* Hero */
+header { display: flex; flex-direction: column; gap: 14px; }
+.lede { color: var(--muted); font-size: 17px; max-width: 34em; }
+.facts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.fact {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--ok-soft); color: var(--ok); font-weight: 500; font-size: 14px;
+  padding: 4px 12px; border-radius: 999px;
+}
+.fact::before { content: "✓"; font-weight: 700; }
+
+/* OS switch */
+.switch {
+  display: inline-grid; grid-template-columns: 1fr 1fr; gap: 4px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 4px;
+  align-self: flex-start;
+}
+.switch button {
+  font: inherit; font-weight: 700; border: 0; border-radius: 9px; padding: 8px 22px;
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.switch button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.switch button:focus-visible, .check input:focus-visible + span, summary:focus-visible, .copy:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.os-win .only-mac, .os-mac .only-win { display: none; }
+
+/* Steps */
+.steps { display: flex; flex-direction: column; gap: 14px; list-style: none; margin: 0; padding: 0; counter-reset: step; }
+.step {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  padding: 20px 20px 18px; display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 4px 14px;
+  counter-increment: step;
+}
+.step::before {
+  content: counter(step); grid-row: 1 / span 2;
+  width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent); font-weight: 700; font-family: var(--font-mono);
+}
+.step.done::before { content: "✓"; background: var(--ok-soft); color: var(--ok); }
+.step-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; min-height: 40px; }
+.step-body { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.once { font-size: 12px; color: var(--muted); border: 1px solid var(--line); padding: 1px 8px; border-radius: 999px; font-weight: 400; margin-left: 8px; vertical-align: middle; }
+.step ol, .step ul { margin: 0; padding-left: 1.3em; display: flex; flex-direction: column; gap: 6px; }
+.check { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--muted); cursor: pointer; user-select: none; }
+.check input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.check span { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); }
+.check input:checked + span { background: var(--ok-soft); color: var(--ok); border-color: transparent; font-weight: 500; }
+
+/* Command blocks */
+.cmd {
+  display: flex; align-items: stretch; background: var(--term-bg); color: var(--term-fg);
+  border-radius: 10px; overflow: hidden; min-width: 0;
+}
+.cmd pre {
+  margin: 0; padding: 12px 14px; flex: 1; min-width: 0; overflow-x: auto;
+  font-family: var(--font-mono); font-size: 14px; line-height: 1.6; white-space: pre;
+}
+.copy {
+  font: inherit; font-size: 13px; border: 0; border-left: 1px solid #2a3140; background: transparent;
+  color: var(--term-fg); padding: 0 14px; cursor: pointer; white-space: nowrap;
+}
+.copy:hover { background: #222a38; }
+
+/* Callouts */
+.note { border-radius: 10px; padding: 12px 14px; font-size: 15px; display: flex; flex-direction: column; gap: 6px; }
+.note strong { font-weight: 700; }
+.note.warn { background: var(--warn-soft); color: var(--ink); }
+.note.warn strong { color: var(--warn); }
+.note.tip { background: var(--accent-soft); }
+.note.tip strong { color: var(--accent); }
+
+/* Terminal mock */
+.term {
+  background: var(--term-bg); color: var(--term-fg); border-radius: 12px; padding: 16px;
+  font-family: var(--font-mono); font-size: 13px; line-height: 1.8; overflow-x: auto; white-space: pre;
+}
+.t-g { color: #5fd49a; } .t-r { color: #ff7b7b; } .t-y { color: #ffcc55; } .t-c { color: #6fd3f0; } .t-d { color: #7c869a; }
+
+/* Heat scale */
+.heat { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.heat div {
+  border-radius: 10px; padding: 10px 6px; text-align: center; font-size: 13px; line-height: 1.4;
+  background: var(--surface); border: 1px solid var(--line);
+}
+.heat b { display: block; font-family: var(--font-mono); font-size: 20px; color: var(--hot); }
+.heat .lv0 b { color: var(--muted); }
+.heat .lv4 { background: var(--hot-soft); border-color: transparent; }
+
+/* Tables */
+.tbl { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+table { border-collapse: collapse; width: 100%; font-size: 15px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font-size: 13px; color: var(--muted); font-weight: 500; letter-spacing: .04em; }
+td:first-child { white-space: nowrap; font-family: var(--font-mono); font-size: 14px; }
+
+/* Launch plan timeline */
+.timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.timeline li { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 14px; padding: 10px 0; border-top: 1px dashed var(--line); }
+.timeline li:first-child { border-top: 0; }
+.timeline .when { font-family: var(--font-mono); font-size: 14px; color: var(--hot); font-weight: 600; padding-top: 2px; }
+
+/* Push + FAQ */
+.push { display: flex; flex-direction: column; gap: 8px; list-style: none; margin: 0; padding: 0; }
+.push li { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+.push li.top { border-color: var(--hot); background: var(--hot-soft); }
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+details + details { margin-top: 8px; }
+summary { cursor: pointer; padding: 12px 14px; font-weight: 500; list-style-position: outside; margin-left: 18px; }
+details > div { padding: 0 14px 14px 32px; color: var(--muted); }
+
+footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 16px; }
+
+@media (max-width: 480px) {
+  .step { grid-template-columns: minmax(0, 1fr); padding: 16px; }
+  .step::before { grid-row: auto; width: 32px; height: 32px; font-size: 14px; }
+  .heat { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
+  .heat div { font-size: 11px; padding: 8px 2px; }
+  .timeline li { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .step { transition: border-color .2s; }
+}
+</style>
+
+<div class="wrap os-win" id="app">
+
+  <header>
+    <span class="eyebrow">时代峰峻商城 · 款式状态监控</span>
+    <h1>从零开始的使用教程</h1>
+    <p class="lede">这个小程序会定时查一次商品每个款式的状态：有货还是售罄、热度几级、库存多少。结果自动记进表格，有变化时还能推送到手机。</p>
+    <div class="facts">
+      <span class="fact">不用打开 App</span>
+      <span class="fact">不用手机模拟器</span>
+      <span class="fact">目前不用 token</span>
+      <span class="fact">Windows 和 Mac 都能用</span>
+    </div>
+  </header>
+
+  <section aria-labelledby="s-setup">
+    <span class="eyebrow">第一部分</span>
+    <h2 id="s-setup">准备和运行</h2>
+    <p>先选你的电脑系统，下面的步骤会跟着变。第 1～4 步只需要做一次。</p>
+    <div class="switch" role="group" aria-label="选择电脑系统">
+      <button type="button" id="btn-win" data-os="win" aria-pressed="true">Windows</button>
+      <button type="button" id="btn-mac" data-os="mac" aria-pressed="false">Mac</button>
+    </div>
+
+    <ol class="steps">
+
+      <li class="step" data-step="get">
+        <div class="step-head">
+          <h3>拿到程序文件<span class="once">一次</span></h3>
+          <label class="check"><input type="checkbox" id="ck-get"><span>完成了</span></label>
+        </div>
+        <div class="step-body">
+          <ul>
+            <li>如果别人直接发给你一个压缩包：解压到一个好找的位置，比如桌面上的 <code>tf_monitor</code> 文件夹。</li>
+            <li>如果是从 GitHub 下载：打开项目页面，点绿色的 <b>Code</b> 按钮 → <b>Download ZIP</b>，下载后解压。</li>
+          </ul>
+          <p>文件夹里应该能看到 <code>monitor.py</code>、<code>config.example.json</code>、<code>README.md</code> 这几个文件。</p>
+        </div>
+      </li>
+
+      <li class="step" data-step="python">
+        <div class="step-head">
+          <h3>安装 Python<span class="once">一次</span></h3>
+          <label class="check"><input type="checkbox" id="ck-python"><span>完成了</span></label>
+        </div>
+        <div class="step-body">
+          <ol>
+            <li>打开 <a href="https://www.python.org/downloads/" target="_blank" rel="noopener">python.org/downloads</a>，点黄色的 <b>Download Python 3.x.x</b>。</li>
+            <li class="only-win">双击下载好的安装包。</li>
+            <li class="only-mac">双击下载好的 <code>.pkg</code> 安装包，一路点“继续”“同意”“安装”，输入开机密码。</li>
+            <li class="only-win">在安装界面<b>最下方</b>勾选 <b>Add Python to PATH</b>，再点 <b>Install Now</b>。</li>
+            <li>等它装完，点关闭。</li>
+          </ol>
+          <div class="note warn only-win"><strong>最容易漏的一步</strong>一定要勾选 “Add Python to PATH”。漏了的话，后面会提示“不是内部或外部命令”。</div>
+          <div class="note tip only-mac"><strong>请用官网安装包</strong>以前用 Homebrew 装过 Python 也没关系，再装一个官网版本，后面最省事。</div>
+        </div>
+      </li>
+
+      <li class="step" data-step="requests">
+        <div class="step-head">
+          <h3>安装 requests 组件<span class="once">一次</span></h3>
+          <label class="check"><input type="checkbox" id="ck-requests"><span>完成了</span></label>
+        </div>
+        <div class="step-body">
+          <p class="only-win">按键盘上的 <kbd>Win</kbd> 键，输入 <code>cmd</code>，回车，会打开一个黑色窗口。在里面粘贴下面这行，回车：</p>
+          <p class="only-mac">按 <kbd>⌘ Command</kbd> + <kbd>空格</kbd>，输入“终端”，回车。在打开的窗口里粘贴下面这行，回车：</p>
+          <div class="cmd only-win"><pre>pip install requests</pre><button class="copy" type="button">复制</button></div>
+          <div class="cmd only-mac"><pre>pip3 install requests</pre><button class="copy" type="button">复制</button></div>
+          <p>看到 <code>Successfully installed</code> 或 <code>Requirement already satisfied</code> 就好了。</p>
+        </div>
+      </li>
+
+      <li class="step" data-step="config">
+        <div class="step-head">
+          <h3>准备配置文件<span class="once">一次</span></h3>
+          <label class="check"><input type="checkbox" id="ck-config"><span>完成了</span></label>
+        </div>
+        <div class="step-body">
+          <ol>
+            <li>在文件夹里把 <code>config.example.json</code> 复制一份，把复制出来的那份<b>改名为 <code>config.json</code></b>。</li>
+            <li class="only-win">看不到 <code>.json</code> 后缀的话：文件夹窗口上方点“查看” → 勾选“文件扩展名”。</li>
+            <li class="only-mac">如果弹窗问是否更改扩展名，选“使用 .json”。</li>
+            <li class="only-win">右键 <code>config.json</code> → 打开方式 → <b>记事本</b>。</li>
+            <li class="only-mac">右键 <code>config.json</code> → 打开方式 → <b>文本编辑</b>。</li>
+          </ol>
+          <p>内容长这样，一般只需要改 <code>goods_ids</code>：</p>
+          <div class="cmd"><pre>{
+  "token": "",
+  "goods_ids": [1891],
+  "interval_seconds": 60,
+  "bark_key": ""
+}</pre><button class="copy" type="button">复制</button></div>
+          <div class="tbl">
+            <table>
+              <thead><tr><th>项目</th><th>怎么填</th></tr></thead>
+              <tbody>
+                <tr><td>token</td><td>留空即可。以后程序提示 401/403 时，再把登录凭证粘贴到两个引号中间。</td></tr>
+                <tr><td>goods_ids</td><td>要看的商品编号，多个用英文逗号隔开，例如 <code>[1891, 1193]</code>。</td></tr>
+                <tr><td>interval_seconds</td><td>几秒查一次。平时填 60，新品上架时填 10（最少 10）。</td></tr>
+                <tr><td>bark_key</td><td>想收到手机推送就填 Bark App 里的 key，不需要就留空。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="note warn"><strong>引号和逗号必须是英文的</strong>
+            <span class="only-win">用记事本编辑一般不会出问题，保存用 <kbd>Ctrl</kbd> + <kbd>S</kbd>。</span>
+            <span class="only-mac">“文本编辑”会把手打的引号自动变成中文弯引号。只改数字、把内容粘贴到已有的引号中间就不会出错；或者在菜单栏 编辑 → 替换 里取消勾选“智能引号”。保存用 <kbd>⌘</kbd> + <kbd>S</kbd>。</span>
+          </div>
+        </div>
+      </li>
+
+      <li class="step only-win" data-step="sleep">
+        <div class="step-head">
+          <h3>关掉电脑睡眠<span class="once">一次</span></h3>
+          <label class="check"><input type="checkbox" id="ck-sleep"><span>完成了</span></label>
+        </div>
+        <div class="step-body">
+          <ol>
+            <li>开始菜单 → <b>设置</b> → <b>系统</b> → <b>电源和睡眠</b>（Win11 是“电源” → “屏幕和睡眠”）。</li>
+            <li>把“<b>睡眠</b>”改成“<b>从不</b>”。“关闭屏幕”不用改，屏幕黑了不影响。</li>
+            <li>笔记本请插着电源，<b>不要合上盖子</b>。</li>
+          </ol>
+        </div>
+      </li>
+
+      <li class="step" data-step="run">
+        <div class="step-head">
+          <h3>运行</h3>
+          <label class="check"><input type="checkbox" id="ck-run"><span>跑起来了</span></label>
+        </div>
+        <div class="step-body">
+          <p class="only-win">打开放程序的文件夹，在窗口上方的<b>地址栏</b>里点一下，输入 <code>cmd</code>，回车。会在这个文件夹里直接打开黑色窗口。然后粘贴这行，回车：</p>
+          <p class="only-mac">打开“终端”，先输入 <code>cd</code> 和一个空格，然后<b>把 tf_monitor 文件夹从访达拖进终端窗口</b>，回车。然后粘贴这行，回车：</p>
+          <div class="cmd only-win"><pre>python monitor.py</pre><button class="copy" type="button">复制</button></div>
+          <div class="cmd only-mac"><pre>caffeinate -i python3 monitor.py</pre><button class="copy" type="button">复制</button></div>
+          <p class="only-mac">前面的 <code>caffeinate -i</code> 会让 Mac 在程序运行期间不睡眠，程序停了就自动恢复，不用改系统设置。MacBook 请插着电源，不要合盖。</p>
+          <p><b>窗口要一直开着</b>，可以最小化。想停下时按 <kbd class="only-win">Ctrl</kbd><kbd class="only-mac">Control</kbd> + <kbd>C</kbd><span class="only-mac">（是 Control 键，不是 Command）</span>。</p>
+          <div class="note warn only-win"><strong>不要用鼠标点黑色窗口里面</strong>点一下或选中文字，程序就会暂停（窗口标题出现“选择”）。不小心点了，按 <kbd>Esc</kbd> 或回车就能继续。</div>
+        </div>
+      </li>
+
+    </ol>
+  </section>
+
+  <section aria-labelledby="s-read">
+    <span class="eyebrow">第二部分</span>
+    <h2 id="s-read">看懂窗口里的字</h2>
+    <p>正常运行时，每查一次多出一行。下面是一个示例：</p>
+<div class="term" role="img" aria-label="程序运行时的终端示例"><span class="t-c">[1891] 启动后的第一次成功请求，作为基准，不算变化。</span>
+<span class="t-d">13:33:21</span> [1891] <span class="t-r">组合:售罄</span> | <span class="t-r">马嘉祺:售罄</span> | <span class="t-g">丁程鑫:有货</span> | <span class="t-g">张真源:有货</span> ...
+<span class="t-d">13:34:21</span> [1891] <span class="t-r">组合:售罄</span> | <span class="t-r">马嘉祺:售罄</span> | <span class="t-g">丁程鑫:有货</span><span class="t-y">热4</span> | ...
+<span class="t-y">!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  发现变化！ 时代少年团特别纪念明信片（1891）
+  变化发生在 13:33:21 到 13:34:21 之间
+  ▶ 丁程鑫：热度 0 → 4
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!</span>
+<span class="t-r">[13:35:21] [1891] 请求失败（连续第 1 次）：网络错误</span></div>
+    <div class="tbl">
+      <table>
+        <tbody>
+          <tr><td>绿色 有货</td><td>这个款现在能买。</td></tr>
+          <tr><td>红色 售罄</td><td>这个款卖完了。</td></tr>
+          <tr><td>黄色 热4</td><td>这个款的热度等级，没写就是 0。</td></tr>
+          <tr><td>黄色 !!!!</td><td>有东西变了，写明是哪个款、变成什么、发生在哪两次查询之间。</td></tr>
+          <tr><td>红色 请求失败</td><td>网络断了之类的问题。程序会自己重试，<b>不会</b>当成售罄，不用管它。</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>热度等级</h3>
+    <div class="heat" aria-label="热度等级 0 到 4">
+      <div class="lv0"><b>0</b>无</div>
+      <div><b>1</b>小火苗</div>
+      <div><b>2</b>中火</div>
+      <div><b>3</b>大火</div>
+      <div class="lv4"><b>4</b>“热”字章</div>
+    </div>
+    <p style="color:var(--muted);font-size:15px">目前看到的新商品，都是从 0 直接跳到 4。</p>
+  </section>
+
+  <section aria-labelledby="s-launch">
+    <span class="eyebrow">第三部分</span>
+    <h2 id="s-launch">新品上架时怎么用</h2>
+    <p>只想知道新商品哪个款先变热、什么时候变热的话，只需要在上架前后跑一段时间。</p>
+    <ol class="timeline">
+      <li><span class="when">提前</span><span>抓包拿到新商品的 goodsId：在 App 里点进商品页，在抓到的请求里找 <code>getShelvesSku/数字</code>，那串数字就是编号。填进 <code>goods_ids</code>，<code>interval_seconds</code> 改成 <code>10</code>。</span></li>
+      <li><span class="when">上架前 5 分钟</span><span>启动程序。还没上架、查不到时会显示红色错误，这是正常的，程序会一直重试，上架后自动开始记录。</span></li>
+      <li><span class="when">上架后</span><span>打开 <code>data</code> 文件夹里的 <code>events.csv</code>，找“字段”一栏是 <code>hotSell</code> 的行：哪个款、从几变成几、在哪两个时间之间变的。</span></li>
+      <li><span class="when">看够了</span><span>按 <kbd>Ctrl</kbd>/<kbd>Control</kbd> + <kbd>C</kbd> 停止。第一次建议多跑 1～2 小时，摸清热度一般多久出现。</span></li>
+    </ol>
+  </section>
+
+  <section aria-labelledby="s-data">
+    <span class="eyebrow">第四部分</span>
+    <h2 id="s-data">数据保存在哪里</h2>
+    <p>都在程序文件夹里的 <code>data</code> 文件夹。多次运行会接着往后写，不会覆盖。想从头开始，把 <code>data</code> 文件夹改个名字就行。</p>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>文件</th><th>里面是什么</th></tr></thead>
+        <tbody>
+          <tr><td>events.csv</td><td><b>最常看的</b>。只记录变化：哪个款、哪个字段、从什么变成什么、发生在哪两次查询之间。</td></tr>
+          <tr><td>snapshots.csv</td><td>每次查询、每个款一行的完整记录，会越来越大，正常。</td></tr>
+          <tr><td>errors.log</td><td>所有错误，用记事本或文本编辑打开。</td></tr>
+          <tr><td>raw 文件夹</td><td>启动时和每次变化时，服务器返回的完整原始数据。</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>双击 csv 文件就会用 Excel 打开（Mac 也可以用 Numbers），中文不会乱码。</p>
+    <div class="note tip only-win"><strong>Windows 小提示</strong>Excel 打开 csv 时会锁住文件，程序暂时写不进去，会先存在内存里，关掉 Excel 后自动补写，不会丢数据。更省心的做法是先复制一份，打开复制出来的那份。</div>
+  </section>
+
+  <section aria-labelledby="s-push">
+    <span class="eyebrow">第五部分</span>
+    <h2 id="s-push">手机会收到哪些推送</h2>
+    <p>填了 <code>bark_key</code> 才会推送。</p>
+    <ul class="push">
+      <li class="top"><b>库存出现 0 和 999 以外的数字</b>：最重要，用“时效性通知”推送，专注模式下也会弹出。</li>
+      <li>任何款式<b>售罄</b>、<b>回流</b>，或者<b>热度</b>变了。</li>
+      <li><b>token 失效</b>（401/403）：之后每 10 分钟重试一次。在 <code>config.json</code> 填上新 token，停止后重新运行。</li>
+      <li><b>连续 5 次请求失败</b>，比如网络断了。</li>
+      <li>出过问题后<b>恢复正常</b>，也会推送一条。</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="s-wake">
+    <span class="eyebrow">第六部分</span>
+    <h2 id="s-wake">电脑睡着或重启了怎么办</h2>
+    <p>先看窗口还在不在，分两种情况：</p>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>情况</th><th>怎么做</th></tr></thead>
+        <tbody>
+          <tr><td>窗口还在</td><td>只是睡眠了。<b>把电脑唤醒就行，什么都不用按</b>。程序会自己继续，一般一分钟内就会出现新的一行。刚唤醒时网络还没连上，可能会出现几行红色的“网络错误”，是正常的。</td></tr>
+          <tr><td>窗口没了</td><td>电脑重启过（比如系统自动更新）或者窗口被关掉了。<b>重新做一遍“运行”那一步</b>就行，之前的数据都还在，新数据会接着往后写。</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><b>怎么确认在正常运行？</b>看窗口最后一行的时间，如果是刚刚的时间就没问题。</p>
+    <div class="note tip"><strong>睡眠期间的数据会怎样</strong>电脑睡着时什么都记不到。如果这段时间里有变化，唤醒后的第一次查询仍然会记下来。只是 <code>events.csv</code> 里“上次成功时间”会是睡眠前的时间，也就是说只知道变化发生在这整段时间里的某个时刻。所以重要的时间段一定要防止睡眠。</div>
+    <div class="note warn only-mac"><strong>Mac 合上盖子会睡眠</strong><code>caffeinate</code> 只能防止“闲置自动睡眠”，合盖还是会睡。唤醒后程序会自己继续。</div>
+    <div class="note warn only-win"><strong>Windows 自动更新可能会重启电脑</strong>重要的日子前，可以在 设置 → Windows 更新 里点“暂停更新”。</div>
+  </section>
+
+  <section aria-labelledby="s-faq">
+    <span class="eyebrow">第七部分</span>
+    <h2 id="s-faq">遇到问题</h2>
+    <div>
+      <details><summary>提示“找不到 config.json”</summary><div>文件名不对。确认是 <code>config.json</code>，不是 <code>config.json.txt</code>。Windows 打开“文件扩展名”显示就能看出来；Mac 右键 → 显示简介，看“名称与扩展名”。</div></details>
+      <details><summary>提示“config.json 格式有误”</summary><div>多半是用了中文引号、中文逗号，或者少了逗号。对照上面的示例检查一遍。</div></details>
+      <details><summary>提示“pip 不是内部或外部命令”（Windows）</summary><div>安装 Python 时没勾选 “Add Python to PATH”。重新运行安装包，选 Modify 或卸载后重装，并勾上这个选项。</div></details>
+      <details><summary>提示 No such file or directory（Mac）</summary><div>“运行”那一步的 <code>cd</code> 没进入正确的文件夹。重新输入 <code>cd</code> 加空格，再拖一次文件夹。</div></details>
+      <details><summary>Mac 弹窗要安装“命令行开发者工具”</summary><div>说明官网的 Python 没装好，重新安装 <code>.pkg</code> 安装包。</div></details>
+      <details><summary>一直显示“网络错误”</summary><div>检查电脑能不能上网。网络恢复后程序会自动继续。</div></details>
+      <details><summary>显示“HTTP 429 被限流”</summary><div>请求太频繁了，程序会自动等 5 分钟再试，不用管。</div></details>
+      <details><summary>改了 config.json 但没生效</summary><div>需要先停止程序（<kbd>Ctrl</kbd>/<kbd>Control</kbd> + <kbd>C</kbd>），再重新运行。</div></details>
+    </div>
+  </section>
+
+  <footer>完成的步骤会记在这台设备的浏览器里，下次打开还能看到。文字版教程也在程序文件夹的 README.md 里。</footer>
+</div>
+
+<script>
+(function () {
+  var app = document.getElementById("app");
+  var store = {
+    get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  };
+
+  // OS switch
+  function setOS(os) {
+    app.classList.toggle("os-win", os === "win");
+    app.classList.toggle("os-mac", os === "mac");
+    document.querySelectorAll(".switch button").forEach(function (b) {
+      b.setAttribute("aria-pressed", String(b.dataset.os === os));
+    });
+    store.set("tf-os", os);
+  }
+  var saved = store.get("tf-os");
+  if (!saved && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) saved = "mac";
+  setOS(saved === "mac" ? "mac" : "win");
+  document.querySelectorAll(".switch button").forEach(function (b) {
+    b.addEventListener("click", function () { setOS(b.dataset.os); });
+  });
+
+  // Step checkboxes
+  document.querySelectorAll(".check input").forEach(function (box) {
+    var step = box.closest(".step");
+    box.checked = store.get("tf-" + box.id) === "1";
+    step.classList.toggle("done", box.checked);
+    box.addEventListener("change", function () {
+      step.classList.toggle("done", box.checked);
+      store.set("tf-" + box.id, box.checked ? "1" : "0");
+    });
+  });
+
+  // Copy buttons
+  document.querySelectorAll(".copy").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var pre = btn.parentElement.querySelector("pre");
+      var text = pre.textContent;
+      function done(msg) { btn.textContent = msg; setTimeout(function () { btn.textContent = "复制"; }, 1600); }
+      function fallback() {
+        var r = document.createRange(); r.selectNodeContents(pre);
+        var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+        done("已选中");
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { done("已复制"); }, fallback);
+      } else { fallback(); }
+    });
+  });
+})();
+</script>
