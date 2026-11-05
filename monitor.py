@@ -79,6 +79,7 @@ PHASE_NAMES = {
     "steady": "平稳",
     "fast": "售罄期",
     "window": "回流观察期",
+    "watch": "售后观察",  # 全部最终售罄后，继续低频观察有没有补货
     "done": "已结束",
     "queued": "排队中",   # 想进售罄期/回流观察期，但另一个商品正在占用
 }
@@ -91,6 +92,7 @@ DEFAULT_PROFILE = {
     "fast_after_seconds": 240,
     "fast_interval": 0.2,
     "window_interval": 1,
+    "after_window_interval": 5,
     "max_launch_minutes": 90,
 }
 
@@ -109,7 +111,7 @@ SNAPSHOT_HEADER = [
 EVENT_HEADER = [
     "记录时间(本地)", "goodsId", "商品名", "skuId", "skuName", "事件",
     "区间开始", "区间结束", "区间中点", "区间开始serverSystemTime", "区间结束serverSystemTime", "区间长度秒",
-    "距开售秒数", "距最近售罄秒数", "分类", "标签", "stock",
+    "距开售秒数", "距最近售罄秒数", "分类", "同一分钟内回流的其他款", "updatedTime变化", "stock",
     "回流持续秒数(估算)", "回流持续最短", "回流持续最长", "inconsistent", "说明",
 ]
 # data/changes.csv：第一版的“任何字段变化”记录（保留）
@@ -357,6 +359,7 @@ def parse_config(cfg):
         "fast_after_seconds": _num(profile["fast_after_seconds"], 240, 0),
         "fast_interval": _num(profile["fast_interval"], 0.2, MIN_INTERVAL),
         "window_interval": _num(profile["window_interval"], 1, MIN_INTERVAL),
+        "after_window_interval": _num(profile["after_window_interval"], 5, MIN_INTERVAL),
         "max_launch_minutes": _num(profile["max_launch_minutes"], 90, 1),
     }
 
@@ -609,7 +612,8 @@ def decide_phase(gs, config, server_now):
     in_stock = [s for s in skus.values() if s["status"] == "有货"]
     if in_window or in_stock:
         return "window", ("有款在售罄后 %.0f 分钟内" % (window / 60)) if in_window else "有款回流有货"
-    return "done", "所有款都已售罄且超过付款窗口"
+    # 全部售罄且都超过付款窗口：继续低频观察（看平台会不会静默补货），直到 max_launch_minutes
+    return "watch", "所有款都已售罄且超过付款窗口"
 
 
 def phase_interval(phase, config):
@@ -619,6 +623,7 @@ def phase_interval(phase, config):
         "steady": p["steady_interval"],
         "fast": p["fast_interval"],
         "window": p["window_interval"],
+        "watch": p["after_window_interval"],
     }.get(phase, config["normal_interval"])
 
 
@@ -688,12 +693,17 @@ def describe_change(field, old, new):
 # 所以每个事件都记录一个时间区间 [区间开始, 区间结束] 和它的中点。
 #
 #   首次售罄：第一次从有货变成售罄
-#   回流    ：售罄后又变回有货。按距离最近一次售罄的时间分“窗口内 / 窗口外”
+#   回流    ：售罄后又变回有货。按距离这个款最近一次售罄的时间分：
+#             窗口内（可能是退单）：10 分钟内，可以用“下单没付款、订单取消”解释
+#             窗口外（不是退单能解释的）：超过 10 分钟
+#             注意：窗口内的回流也可能是补货，光看时间分不出来。
+#             所以不给回流贴“补货”标签，只记录线索：同一分钟内回流的其他款、stock、
+#             updatedTime 有没有变化、回流持续了多久，留给人来判断。
 #   再次售罄：回流后又变成售罄，同时算出这次回流持续了多久
 #   最终售罄：最后一次售罄后超过付款窗口（10 分钟）都没有再回流
 #   取消最终售罄：已经“最终售罄”的款又出现了窗口外回流
 
-SAME_MINUTE = 60   # “同一分钟内”有 2 个以上的款回流 → 疑似补货
+SAME_MINUTE = 60   # 记录“前后 60 秒内也回流了的其他款”
 
 
 def new_sku_track(name):
@@ -719,15 +729,15 @@ def make_interval(a, b):
             "a_text": a["text"], "b_text": b["text"]}
 
 
-def write_event(gs, goods_name, sku_id, track, kind, iv, config, since=None, cls="", tags=(),
-                stock="", dur=None, note=""):
+def write_event(gs, goods_name, sku_id, track, kind, iv, config, since=None, cls="", others="",
+                updated="", stock="", dur=None, note=""):
     """往 events.csv 写一行，并在终端打印。"""
     from_sale = round(iv["mid"] - gs["sale_ts"], 1) if gs["sale_ts"] else ""
     row = [
         now_beijing(), gs["id"], goods_name, sku_id, track["name"], kind,
         fmt_time(iv["a"]), fmt_time(iv["b"]), fmt_time(iv["mid"]), iv["a_text"], iv["b_text"],
         round(iv["b"] - iv["a"], 2), from_sale,
-        "" if since is None else round(since, 1), cls, "、".join(tags), stock,
+        "" if since is None else round(since, 1), cls, others, updated, stock,
         "" if dur is None else round(dur["est"], 1),
         "" if dur is None else round(dur["min"], 1),
         "" if dur is None else round(dur["max"], 1),
@@ -744,15 +754,17 @@ def write_event(gs, goods_name, sku_id, track, kind, iv, config, since=None, cls
         detail.append(f"距上次售罄 {since:.0f} 秒")
     if cls:
         detail.append(cls)
-    if tags:
-        detail.append("【" + "、".join(tags) + "】")
+    if others:
+        detail.append(f"同一分钟内也回流：{others}")
+    if updated:
+        detail.append(f"updatedTime：{updated}")
     if dur is not None:
         detail.append(f"回流持续约 {dur['est']:.1f} 秒（{max(dur['min'], 0):.1f}～{dur['max']:.1f}）")
     if stock not in ("", None):
         detail.append(f"stock={stock}")
     if note:
         detail.append(note)
-    loud = kind in ("首次售罄", "最终售罄", "取消最终售罄") or (kind == "回流" and cls == "窗口外")
+    loud = kind in ("首次售罄", "最终售罄", "取消最终售罄") or (kind == "回流" and cls.startswith("窗口外"))
     color = YELLOW if loud else CYAN
     mark = "★" if loud else "·"
     print(f"{color}{mark} [{gs['id']}] {name} {kind} @{when}（±{(iv['b'] - iv['a']) / 2:.1f}s） "
@@ -794,40 +806,22 @@ def track_skus(gs, current, obs, goods_name, config):
         elif prev_status == "售罄" and now_status == "有货" and track["first_soldout"] is not None:
             iv = make_interval(track["last_obs"], obs)
             since = iv["mid"] - track["last_soldout"]["mid"]
-            cls = "窗口内" if since <= window else "窗口外"
-            rf = {"iv": iv, "since": since, "cls": cls, "tags": [], "stock": info["stock"],
-                  "sku_id": sku_id, "duration": None, "end": None}
-            note = ""
+            cls = "窗口内（可能是退单）" if since <= window else "窗口外（不是退单能解释的）"
             if track["final"]:
                 track["final"] = False
                 write_event(gs, goods_name, sku_id, track, "取消最终售罄", iv, config,
-                            note="最终售罄后又出现窗口外回流，重新等待")
-            if cls == "窗口外":
-                if is_unusual_stock(info["stock"]):
-                    rf["tags"].append("疑似补货")
-                    note = "stock 出现 0 和 999 以外的数字"
-                elif updated_time_changed_recently(gs, iv):
-                    rf["tags"].append("疑似补货")
-                    note = "商品 updatedTime 有变化"
-            # 同一分钟内有其他款也回流了？
-            others = [o for t in gs["sku"].values() if t is not track for o in t["reflows"]
-                      if abs(o["iv"]["mid"] - iv["mid"]) <= SAME_MINUTE]
-            if others:
-                if cls == "窗口外" and "疑似补货" not in rf["tags"]:
-                    rf["tags"].append("疑似补货")
-                    note = f"同一分钟内有 {len(others) + 1} 个款回流"
-                # 之前那些窗口外回流也补上标签
-                for o in others:
-                    if o["cls"] == "窗口外" and "疑似补货" not in o["tags"]:
-                        o["tags"].append("疑似补货")
-                        ot = gs["sku"][o["sku_id"]]
-                        write_event(gs, goods_name, o["sku_id"], ot, "补充标签", o["iv"], config,
-                                    since=o["since"], cls=o["cls"], tags=o["tags"],
-                                    note=f"同一分钟内有 {len(others) + 1} 个款回流，补标疑似补货")
+                            note="最终售罄后又回流了，重新等待")
+            # 线索 1：前后 60 秒内也回流了的其他款（只能看到已经发生的）
+            others = sorted({short_sku_name(t["name"]) for t in gs["sku"].values() if t is not track
+                             for o in t["reflows"] if abs(o["iv"]["mid"] - iv["mid"]) <= SAME_MINUTE})
+            # 线索 2：商品列表接口的 updatedTime 有没有变化（第 3 部分实现）
+            updated = updated_time_clue(gs, iv)
+            rf = {"iv": iv, "since": since, "cls": cls, "stock": info["stock"], "others": others,
+                  "updated": updated, "sku_id": sku_id, "duration": None, "end": None}
             track["reflow"] = rf
             track["reflows"].append(rf)
             write_event(gs, goods_name, sku_id, track, "回流", iv, config, since=since, cls=cls,
-                        tags=rf["tags"], stock=info["stock"], note=note)
+                        others="、".join(others), updated=updated, stock=info["stock"])
 
         # 最终售罄：最近一次售罄后超过付款窗口都没有回流
         if (now_status == "售罄" and track["last_soldout"] is not None and not track["final"]
@@ -846,9 +840,9 @@ def track_skus(gs, current, obs, goods_name, config):
             del gs["sku"][sku_id]   # 款式消失了，不再参与判断
 
 
-def updated_time_changed_recently(gs, iv):
-    """商品列表接口的 updatedTime 是否在这次回流前后变化过（第 3 部分实现，现在总是 False）。"""
-    return False
+def updated_time_clue(gs, iv):
+    """商品列表接口的 updatedTime 在这次回流前后有没有变化（第 3 部分实现，现在返回空）。"""
+    return ""
 
 
 def handle_success(gs, result, config, state):
@@ -1045,7 +1039,8 @@ def main():
             print(f"  · 商品 {g['id']}：每 {config['normal_interval']:g} 秒请求一次")
     if any(g["sale_time"] for g in config["goods"]):
         print(f"  开售阶段：准备 每{p['prepare_interval']:g}秒 → 平稳 每{p['steady_interval']:g}秒 → "
-              f"售罄期 每{p['fast_interval']:g}秒 → 回流观察期 每{p['window_interval']:g}秒")
+              f"售罄期 每{p['fast_interval']:g}秒 → 回流观察期 每{p['window_interval']:g}秒 → "
+              f"售后观察 每{p['after_window_interval']:g}秒")
     print(f" token：{'已填写' if config['token'] else '未填写（不带 token 请求）'}"
           f"   Bark 推送：{'已开启' if config['bark_key'] else '未开启'}")
     print(f" 数据保存在：{DATA_DIR}")
