@@ -36,6 +36,9 @@ CONFIG_PATH = os.path.join(SCRIPT_DIR, "config.json")
 DATA_DIR = os.path.join(SCRIPT_DIR, "data")
 
 API_URL = "https://app.tfent.cn/appmobile/goods/shelves/getShelvesSku/{goods_id}"
+LIST_URL = "https://app.tfent.cn/appmobile/goods/goodsSpu/pageListForShopMall"
+LIST_INTERVAL_NORMAL = 5 * 60   # 商品列表接口：平时每 5 分钟查一次
+LIST_INTERVAL_BUSY = 30         # 有商品在售罄期 / 回流观察期 / 售后观察时，每 30 秒查一次
 
 # 请求头（照抄 App 的请求）。Authorization 会在有 token 时自动加上。
 BASE_HEADERS = {
@@ -122,6 +125,8 @@ CHANGE_HEADER = [
     "字段", "旧值", "新值",
 ]
 PHASE_HEADER = ["本地时间", "估算服务器时间", "goodsId", "旧阶段", "新阶段", "原因"]
+UPDATED_HEADER = ["发现时间(本地)", "goodsId", "商品名", "旧updatedTime", "新updatedTime",
+                  "列表stock", "上次查询时间(本地)", "附近的回流"]
 
 
 # ============================================================
@@ -546,6 +551,8 @@ def new_goods_state(g):
         "next_due": 0.0,         # 下一次请求的时间（本地时间戳）
         "last_print": 0.0,       # 上次在终端打印状态行的时间
         "auth_wait_until": 0.0,  # token 失效后，在这个时间之前不再请求
+        "updated_changes": [],   # 商品列表接口发现的 updatedTime 变化 [{"ts":新值时间戳, "text":新值}]
+        "list_checked_at": None, # 商品列表接口最近一次成功查询的估算服务器时间
     }
 
 
@@ -559,6 +566,7 @@ def new_state(config):
         "fail_pushed": False,
         "auth_pushed": False,
         "stock_alerted": {},     # 已经推送过的特殊库存值
+        "list": {"next_due": 0.0, "last": {}, "last_local": ""},   # 商品列表接口的状态
     }
 
 
@@ -815,9 +823,11 @@ def track_skus(gs, current, obs, goods_name, config):
             others = sorted({short_sku_name(t["name"]) for t in gs["sku"].values() if t is not track
                              for o in t["reflows"] if abs(o["iv"]["mid"] - iv["mid"]) <= SAME_MINUTE})
             # 线索 2：商品列表接口的 updatedTime 有没有变化（第 3 部分实现）
-            updated = updated_time_clue(gs, iv)
+            soldout_mid = track["last_soldout"]["mid"]
+            updated = updated_time_clue(gs, iv, soldout_mid)
             rf = {"iv": iv, "since": since, "cls": cls, "stock": info["stock"], "others": others,
-                  "updated": updated, "sku_id": sku_id, "duration": None, "end": None}
+                  "updated": updated, "sku_id": sku_id, "duration": None, "end": None,
+                  "soldout_mid": soldout_mid}
             track["reflow"] = rf
             track["reflows"].append(rf)
             write_event(gs, goods_name, sku_id, track, "回流", iv, config, since=since, cls=cls,
@@ -840,9 +850,114 @@ def track_skus(gs, current, obs, goods_name, config):
             del gs["sku"][sku_id]   # 款式消失了，不再参与判断
 
 
-def updated_time_clue(gs, iv):
-    """商品列表接口的 updatedTime 在这次回流前后有没有变化（第 3 部分实现，现在返回空）。"""
-    return ""
+UPDATED_SLACK = 5   # updatedTime 只精确到秒，再留几秒余量
+
+
+def updated_time_clue(gs, iv, soldout_mid):
+    """这次回流前后，商品列表接口的 updatedTime 有没有变化。
+
+    看 updatedTime 的新值是否落在“这个款上次售罄”到“看到回流”之间（前后各留几秒）。
+    列表接口最快 30 秒才查一次，可能还没查到；那就写“待确认”，之后查到会写进 updated_time.csv。"""
+    hits = [c for c in gs["updated_changes"]
+            if soldout_mid - UPDATED_SLACK <= c["ts"] <= iv["b"] + UPDATED_SLACK]
+    if hits:
+        c = hits[-1]
+        return f"有变化（{c['text'][11:]}，回流前 {iv['mid'] - c['ts']:.0f} 秒）"
+    if gs["list_checked_at"] is not None and gs["list_checked_at"] >= iv["b"]:
+        return "未发现"
+    return "待确认（见 updated_time.csv）"
+
+
+def parse_updated_time(value):
+    """updatedTime 实际是 '2026-11-06 04:24:21' 这样的文字；万一是毫秒时间戳也能处理。"""
+    if isinstance(value, (int, float)):
+        ts = value / 1000
+        return ts, fmt_time(ts, ms=False)
+    ts = parse_beijing(value)
+    return ts, (str(value) if value is not None else "")
+
+
+# ============================================================
+# 商品列表接口（看 updatedTime 有没有变化）
+# ============================================================
+
+def fetch_list(goods_ids, token):
+    """请求一次商品列表接口。成功返回 {goodsId: 记录}，失败返回 (kind, 说明)。"""
+    headers = dict(BASE_HEADERS)
+    headers["Content-Type"] = "application/json"
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    payload = {"goodsIds": [int(g) if str(g).isdigit() else g for g in goods_ids],
+               "pageNum": 1, "pageSize": max(10, len(goods_ids)), "sortType": 1, "sortFieldType": 0}
+    try:
+        resp = requests.post(LIST_URL, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
+    except requests.Timeout:
+        return "error", "请求超时"
+    except requests.RequestException as e:
+        return "error", f"网络错误（{type(e).__name__}）"
+    if resp.status_code in (401, 403):
+        return "auth", f"HTTP {resp.status_code}"
+    if resp.status_code == 429:
+        return "ratelimit", "HTTP 429"
+    if resp.status_code != 200:
+        return "error", f"HTTP {resp.status_code}"
+    try:
+        body = resp.json()
+    except ValueError:
+        return "error", "返回内容不是 JSON"
+    if not isinstance(body, dict) or body.get("code") != 200:
+        return "error", f"接口 code={body.get('code') if isinstance(body, dict) else '?'}"
+    data = body.get("data")
+    records = data.get("records") if isinstance(data, dict) else None
+    if not isinstance(records, list):
+        return "error", "返回数据里没有 records"
+    return "ok", {str(r.get("goodsId")): r for r in records if isinstance(r, dict)}
+
+
+def check_list(config, state):
+    """查一次商品列表，发现 updatedTime 变化就记录、推送。失败只记错误，不改任何状态。"""
+    lst = state["list"]
+    busy = any(g["phase"] in ("fast", "window", "watch") for g in state["goods"].values())
+    interval = LIST_INTERVAL_BUSY if busy else LIST_INTERVAL_NORMAL
+    lst["next_due"] = time_now() + interval
+
+    kind, result = fetch_list(list(state["goods"]), config["token"])
+    if kind != "ok":
+        log_error(f"[商品列表] 请求失败：{result}")
+        if kind == "ratelimit":
+            state["rl_until"] = time_now() + RATE_LIMIT_SLOWDOWN
+        return
+
+    now_local = now_beijing()
+    server_now = state["clock"].now()
+    for gid, gs in state["goods"].items():
+        rec = result.get(gid)
+        if rec is None:
+            continue
+        new_ts, new_text = parse_updated_time(rec.get("updatedTime"))
+        old = lst["last"].get(gid)
+        lst["last"][gid] = {"ts": new_ts, "text": new_text}
+        gs["list_checked_at"] = server_now
+        if old is None or old["text"] == new_text or new_ts is None:
+            continue   # 第一次查询只作为基准；没变化就跳过
+
+        # updatedTime 变了：找找附近有没有回流（回流可能比这次查询更早被记录）
+        gs["updated_changes"].append({"ts": new_ts, "text": new_text})
+        near = []
+        for t in gs["sku"].values():
+            for rf in t["reflows"]:
+                if rf["soldout_mid"] - UPDATED_SLACK <= new_ts <= rf["iv"]["b"] + UPDATED_SLACK:
+                    near.append(f"{short_sku_name(t['name'])}（回流 {fmt_time(rf['iv']['mid'])[11:19]}）")
+        name = rec.get("name") or ""
+        append_csv("updated_time.csv", UPDATED_HEADER, [[
+            now_local, gid, name, old["text"], new_text, rec.get("stock"),
+            lst.get("last_local", ""), "、".join(near)]])
+        print(f"{YELLOW}★ [{gid}] 商品 updatedTime 变化：{old['text']} → {new_text}"
+              f"（列表 stock={rec.get('stock')}）{('，附近的回流：' + '、'.join(near)) if near else ''}{RESET}")
+        bark_push(config, f"商品更新 {short_goods_name(name)}",
+                  f"updatedTime {old['text'][11:]} → {new_text[11:]}\n列表 stock={rec.get('stock')}"
+                  + (f"\n附近的回流：{'、'.join(near)}" if near else ""))
+    lst["last_local"] = now_local
 
 
 def handle_success(gs, result, config, state):
@@ -1010,11 +1125,19 @@ def check_goods(gs, config, state):
 # ============================================================
 
 def run_due(config, state):
-    """找出最早该请求的商品，如果时间到了就请求它。返回距离下一次请求还要等几秒。"""
+    """找出最早该请求的商品（或商品列表接口），如果时间到了就请求它。返回距离下一次请求还要等几秒。"""
+    if state["list"]["next_due"] <= time_now():
+        try:
+            check_list(config, state)
+        except Exception:
+            log_error("程序内部错误（商品列表）：\n" + traceback.format_exc())
+        return 0
     gs = min(state["goods"].values(), key=lambda g: g["next_due"])
-    wait = gs["next_due"] - time_now()
+    wait = min(gs["next_due"], state["list"]["next_due"]) - time_now()
     if wait > 0:
         return wait
+    if gs["next_due"] > time_now():
+        return 0
     try:
         check_goods(gs, config, state)
     except Exception:
