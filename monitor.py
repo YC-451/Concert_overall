@@ -553,6 +553,12 @@ def new_goods_state(g):
         "auth_wait_until": 0.0,  # token 失效后，在这个时间之前不再请求
         "updated_changes": [],   # 商品列表接口发现的 updatedTime 变化 [{"ts":新值时间戳, "text":新值}]
         "list_checked_at": None, # 商品列表接口最近一次成功查询的估算服务器时间
+        "name": "",              # 商品名（第一次成功请求后才知道）
+        "summary_dirty": False,  # 有新事件，汇总文件需要重写
+        "ranking_key": None,     # 上次打印的排名，排名变了才重新打印
+        # 售罄期内的请求统计（售罄期结束后写进汇总文件末尾）
+        "stats": {"requests": 0, "fails": 0, "r429": 0, "rtts": [], "rl_min": None,
+                  "svt_last": None, "svt_changes": [], "start": None, "end": None},
     }
 
 
@@ -653,6 +659,11 @@ def update_phase(gs, config, state):
     if phase != gs["phase"]:
         old = gs["phase"]
         gs["phase"] = phase
+        if phase == "fast":
+            gs["stats"]["start"] = server_now
+        if old == "fast":
+            gs["stats"]["end"] = server_now
+            write_summary(gs, config, state)
         append_csv("phases.csv", PHASE_HEADER, [[
             now_beijing(), fmt_time(server_now), gs["id"],
             PHASE_NAMES.get(old, "（启动）"), PHASE_NAMES[phase], reason]])
@@ -752,6 +763,7 @@ def write_event(gs, goods_name, sku_id, track, kind, iv, config, since=None, cls
         "true" if track["inconsistent"] else "", note,
     ]
     append_csv("events.csv", EVENT_HEADER, [row])
+    gs["summary_dirty"] = True
 
     name = short_sku_name(track["name"])
     when = fmt_time(iv["mid"])[11:23]
@@ -960,6 +972,157 @@ def check_list(config, state):
     lst["last_local"] = now_local
 
 
+# ============================================================
+# 售罄汇总：data/soldout_<goodsId>.csv
+# ============================================================
+
+def count_fast_request(gs, result):
+    """售罄期内每次请求都记一笔，用来评估请求质量和服务器数据的更新精度。"""
+    st = gs["stats"]
+    st["requests"] += 1
+    if result["kind"] != "ok":
+        st["fails"] += 1
+    if result["kind"] == "ratelimit":
+        st["r429"] += 1
+    if result["recv_ts"] is not None and result["http_status"] != "":
+        st["rtts"].append((result["recv_ts"] - result["send_ts"]) * 1000)
+    rl = to_int(result["ratelimit"])
+    if rl is not None:
+        st["rl_min"] = rl if st["rl_min"] is None else min(st["rl_min"], rl)
+    if result["kind"] == "ok":
+        svt = result["data"].get("serverSystemTime")
+        if svt and svt != st["svt_last"]:
+            if st["svt_last"] is not None:
+                st["svt_changes"].append(result["recv_ts"])   # 看到 serverSystemTime 跳变的时刻
+            st["svt_last"] = svt
+
+
+def reflow_has_update(gs, rf):
+    """这次回流前后 updatedTime 有没有变化（用目前已知的全部变化重新判断）"""
+    return any(rf["soldout_mid"] - UPDATED_SLACK <= c["ts"] <= rf["iv"]["b"] + UPDATED_SLACK
+               for c in gs["updated_changes"])
+
+
+def reflow_has_partner(gs, sku_id, rf):
+    """前后 60 秒内有没有其他款也回流（两个方向都算）"""
+    return any(abs(o["iv"]["mid"] - rf["iv"]["mid"]) <= SAME_MINUTE
+               for sid, t in gs["sku"].items() if sid != sku_id for o in t["reflows"])
+
+
+def build_summary(gs, config, state):
+    """算出汇总表的每一行。返回 (表头, 行列表, 排名文字列表)。"""
+    window = config["payment_window_seconds"]
+    server_now = state["clock"].now()
+    items = list(gs["sku"].items())
+    sold = sorted([(sid, t) for sid, t in items if t["first_soldout"]],
+                  key=lambda x: x[1]["first_soldout"]["mid"])
+    unsold = [(sid, t) for sid, t in items if not t["first_soldout"]]
+
+    def overlaps(a, b):
+        return a["a"] < b["b"] and b["a"] < a["b"]
+
+    header = ["首次售罄排名", "款式", "skuId", "首次售罄区间开始", "首次售罄区间结束", "区间中点",
+              "距开售秒数", "排名说明", "窗口内回流次数", "窗口外回流次数",
+              "updatedTime有变化的回流次数", "和其他款同一分钟回流的次数",
+              "回流平均持续秒数", "回流最长持续秒数", "首次售罄后累计有货秒数", "当前状态", "最终售罄时间"]
+    rows, ranking = [], []
+    for rank, (sid, t) in enumerate(sold + unsold, start=1):
+        fs = t["first_soldout"]
+        reflows = t["reflows"]
+        done = [rf for rf in reflows if rf["duration"] is not None]
+        ongoing = [rf for rf in reflows if rf["duration"] is None]
+        in_stock_secs = sum(rf["duration"]["est"] for rf in done) + \
+            sum(max(0.0, server_now - rf["iv"]["mid"]) for rf in ongoing)
+        if fs:
+            tied = [short_sku_name(o["name"]) for osid, o in sold
+                    if osid != sid and overlaps(fs, o["first_soldout"])]
+            note = ("和 " + "、".join(tied) + " 无法分出先后") if tied else ""
+        elif t["status"] == "售罄":
+            note = "脚本启动时已经售罄（售罄时间不知道）"
+        else:
+            note = "尚未售罄"
+        status = t["status"] or ""
+        if ongoing:
+            status += "（回流中）"
+        final = fmt_time(t["last_soldout"]["mid"]) if t["final"] else ""
+        rows.append([
+            rank if fs else "", t["name"], sid,
+            fmt_time(fs["a"]) if fs else "", fmt_time(fs["b"]) if fs else "", fmt_time(fs["mid"]) if fs else "",
+            round(fs["mid"] - gs["sale_ts"], 1) if fs and gs["sale_ts"] else "",
+            note,
+            sum(1 for rf in reflows if rf["since"] <= window),
+            sum(1 for rf in reflows if rf["since"] > window),
+            sum(1 for rf in reflows if reflow_has_update(gs, rf)),
+            sum(1 for rf in reflows if reflow_has_partner(gs, sid, rf)),
+            round(sum(rf["duration"]["est"] for rf in done) / len(done), 1) if done else "",
+            round(max(rf["duration"]["est"] for rf in done), 1) if done else "",
+            round(in_stock_secs, 1) if fs else "",
+            status, final,
+        ])
+        if fs:
+            from_sale = f"开售后 {fs['mid'] - gs['sale_ts']:.1f}s" if gs["sale_ts"] else fmt_time(fs["mid"])[11:23]
+            ranking.append(f"{rank}. {short_sku_name(t['name'])}  {from_sale}"
+                           f"（±{(fs['b'] - fs['a']) / 2:.1f}s）{'  ← ' + note if note else ''}")
+    return header, rows, ranking
+
+
+def stats_rows(gs):
+    """售罄期内的请求统计（售罄期结束后才有）。"""
+    st = gs["stats"]
+    if st["end"] is None or st["start"] is None:
+        return []
+    rtts = st["rtts"]
+    jumps = [b - a for a, b in zip(st["svt_changes"], st["svt_changes"][1:])]
+    span = st["end"] - st["start"]
+    return [
+        [],
+        ["统计（售罄期内）", "数值", "说明"],
+        ["售罄期开始", fmt_time(st["start"]), "估算服务器时间"],
+        ["售罄期结束", fmt_time(st["end"]), f"共 {span:.0f} 秒"],
+        ["请求次数", st["requests"], f"平均每秒 {st['requests'] / span:.2f} 次" if span > 0 else ""],
+        ["失败次数", st["fails"], "超时、网络错误、5xx、429 等都算"],
+        ["429 次数", st["r429"], ""],
+        ["平均往返耗时ms", round(sum(rtts) / len(rtts)) if rtts else "", "发出到收到"],
+        ["最大往返耗时ms", round(max(rtts)) if rtts else "", ""],
+        ["serverSystemTime 平均多久跳一次(秒)", round(sum(jumps) / len(jumps), 2) if jumps else "",
+         "约等于 1 说明服务器时间是实时的；明显大于 1 说明返回的数据可能有缓存"],
+        ["X-RateLimit-Remaining 最小值", st["rl_min"] if st["rl_min"] is not None else "", "越小说明离限流越近"],
+    ]
+
+
+def write_summary(gs, config, state):
+    """重写 data/soldout_<goodsId>.csv（整个文件覆盖）。文件被 Excel 占用时，下次有请求再试。"""
+    if not gs["sku"]:
+        return
+    header, rows, ranking = build_summary(gs, config, state)
+    sale = gs["sale_time"] or "（没填开售时间）"
+    lines = [["商品", gs["name"], "goodsId", gs["id"], "开售时间", sale, "更新时间", now_beijing()], [],
+             header] + rows + stats_rows(gs)
+    path = os.path.join(DATA_DIR, f"soldout_{gs['id']}.csv")
+    tmp = path + ".tmp"
+    try:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(tmp, "w", newline="", encoding="utf-8-sig") as f:
+            csv.writer(f).writerows(lines)
+        os.replace(tmp, path)
+        gs["summary_dirty"] = False
+    except PermissionError:
+        gs["summary_dirty"] = True   # 被 Excel 打开了，下次再写
+        log_error(f"soldout_{gs['id']}.csv 被其他程序（可能是 Excel）占用，关闭后会自动更新")
+    except Exception as e:
+        gs["summary_dirty"] = True
+        log_error(f"写入 soldout_{gs['id']}.csv 失败：{e}")
+
+    # 排名有变化才在终端打印，避免刷屏
+    key = tuple(r.split("  ")[0] + r.split("  ")[1] for r in ranking) if ranking else None
+    if ranking and key != gs["ranking_key"]:
+        gs["ranking_key"] = key
+        print(f"{CYAN}── [{gs['id']}] 首次售罄排名 ──")
+        for r in ranking:
+            print("   " + r)
+        print(f"──────────────{RESET}")
+
+
 def handle_success(gs, result, config, state):
     goods_id = gs["id"]
     data = result["data"]
@@ -997,7 +1160,12 @@ def handle_success(gs, result, config, state):
     # ---- 2. 跟踪每个款的售罄 / 回流（写 events.csv） ----
     # 这次观察的时刻 = 请求发出和收到的中点，换算成服务器时间
     obs = {"ts": (result["send_ts"] + result["recv_ts"]) / 2 + clock.offset, "text": server_time}
+    gs["name"] = goods_name
+    if gs["last"] is None:
+        gs["summary_dirty"] = True   # 启动后第一次成功请求：先生成汇总文件
     track_skus(gs, current, obs, goods_name, config)
+    if gs["summary_dirty"]:
+        write_summary(gs, config, state)
 
     # ---- 3. 和上一次成功的结果比较（第一版的字段变化记录，保留） ----
     prev = gs["last"]
@@ -1084,6 +1252,8 @@ def check_goods(gs, config, state):
     if gs["phase"] is None:          # 启动后第一次：先定好阶段，快照里才有阶段名
         update_phase(gs, config, state)
     result = fetch_goods(gs["id"], config["token"])
+    if gs["phase"] == "fast":
+        count_fast_request(gs, result)
 
     if result["kind"] == "ok":
         if state["fail_pushed"] or state["auth_pushed"]:
