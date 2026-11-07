@@ -99,6 +99,17 @@ DEFAULT_PROFILE = {
     "max_launch_minutes": 90,
 }
 
+# 自动发现新商品的默认设置
+DEFAULT_DISCOVER = {
+    "enabled": True,          # 是否自动发现新商品
+    "ahead": 50,              # 查到“已知最大商品编号 + 50”
+    "interval_seconds": 60,   # 每 60 秒查一次
+    "auto_add": True,         # 发现后自动开始监控
+}
+
+# 商品列表接口的 5 种排序方式（sortFieldType）。1 的含义还不确定，可能是销量。
+SORTS = [(0, "默认"), (1, "未知（可能是销量）"), (2, "编号/上架顺序"), (3, "价格"), (4, "更新时间")]
+
 # 北京时间（UTC+8）。不用时区库，Windows 上也不会出问题。
 BEIJING = timezone(timedelta(hours=8))
 
@@ -121,9 +132,12 @@ EVENT_HEADER = [
 CHANGE_HEADER = [
     "本次本地时间", "本次serverSystemTime",
     "上次成功本地时间", "上次成功serverSystemTime",
-    "goodsId", "商品名", "skuId", "skuName",
+    "来源", "goodsId", "商品名", "skuId", "skuName",
     "字段", "旧值", "新值",
 ]
+RANKING_HEADER = ["发现时间(本地)", "排序方式", "含义", "上次查询时间(本地)", "旧顺序", "新顺序", "变化"]
+NEW_GOODS_HEADER = ["发现时间(本地)", "goodsId", "商品名", "价格", "列表stock", "startSelling",
+                    "sellStartTime", "updatedTime", "是否自动开始监控"]
 PHASE_HEADER = ["本地时间", "估算服务器时间", "goodsId", "旧阶段", "新阶段", "原因"]
 UPDATED_HEADER = ["发现时间(本地)", "goodsId", "商品名", "旧updatedTime", "新updatedTime",
                   "列表stock", "上次查询时间(本地)", "附近的回流"]
@@ -368,9 +382,19 @@ def parse_config(cfg):
         "max_launch_minutes": _num(profile["max_launch_minutes"], 90, 1),
     }
 
+    disc = dict(DEFAULT_DISCOVER)
+    disc.update(cfg.get("discover") or {})
+    discover = {
+        "enabled": bool(disc["enabled"]),
+        "ahead": int(_num(disc["ahead"], 50, 1)),
+        "interval_seconds": _num(disc["interval_seconds"], 60, 10),
+        "auto_add": bool(disc["auto_add"]),
+    }
+
     return {
         "token": token,
         "bark_key": bark_key,
+        "discover": discover,
         "goods": unique,
         "normal_interval": normal,
         "payment_window_seconds": _num(cfg.get("payment_window_minutes", 10), 10, 0) * 60,
@@ -554,6 +578,7 @@ def new_goods_state(g):
         "updated_changes": [],   # 商品列表接口发现的 updatedTime 变化 [{"ts":新值时间戳, "text":新值}]
         "list_checked_at": None, # 商品列表接口最近一次成功查询的估算服务器时间
         "name": "",              # 商品名（第一次成功请求后才知道）
+        "flat": None,            # 上一次成功请求的全部字段（摊平后），用来比较任何字段的变化
         "summary_dirty": False,  # 有新事件，汇总文件需要重写
         "ranking_key": None,     # 上次打印的排名，排名变了才重新打印
         # 售罄期内的请求统计（售罄期结束后写进汇总文件末尾）
@@ -573,6 +598,7 @@ def new_state(config):
         "auth_pushed": False,
         "stock_alerted": {},     # 已经推送过的特殊库存值
         "list": {"next_due": 0.0, "last": {}, "last_local": ""},   # 商品列表接口的状态
+        "discover": {"next_due": 0.0 if config["discover"]["enabled"] else float("inf"), "known": None},
     }
 
 
@@ -691,6 +717,67 @@ def schedule_next(gs, config, state, send_ts):
 # ============================================================
 # 处理一次成功的结果
 # ============================================================
+
+# ============================================================
+# 通用字段记录：不管平台以后加什么字段，都能记下来
+# ============================================================
+
+# 这些字段不比较：detail 是商品详情页的 HTML（里面的图片链接每次都不一样），
+# serverSystemTime 每次都变，goodsSkuList 会单独按款式处理。
+SKIP_FIELDS = {"detail", "serverSystemTime", "goodsSkuList"}
+# 图片链接后面的 ?签名参数 每次都不一样，比较前去掉
+URL_QUERY = re.compile(r"(https?://[^\s\"'?<>]+)\?[^\s\"'<>]*")
+MISSING = "（无此字段）"
+# 这些字段一变就推送（可能和销量有关）
+SALES_HINT_FIELDS = {"sellNum", "sellTip", "sellTipType", "hotSell", "stockType", "sellOut",
+                     "purchaseLimitsNum", "putStatus", "startSelling", "sellStartTime"}
+
+
+def flatten(obj, prefix="", out=None):
+    """把嵌套的 JSON 摊平成 {"字段名": 值}，例如 skuSpecValues[0].specValue。"""
+    if out is None:
+        out = {}
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if not prefix and k in SKIP_FIELDS:
+                continue
+            flatten(v, f"{prefix}.{k}" if prefix else str(k), out)
+    elif isinstance(obj, list):
+        if not obj:
+            out[prefix] = "[]"
+        for i, v in enumerate(obj):
+            flatten(v, f"{prefix}[{i}]", out)
+    else:
+        if isinstance(obj, str):
+            obj = URL_QUERY.sub(r"\1", obj)
+        out[prefix] = obj
+    return out
+
+
+def show_value(v):
+    if v is MISSING:
+        return MISSING
+    if v is None:
+        return "null"
+    return str(v)
+
+
+def diff_flat(old, new):
+    """比较两次摊平后的字段，返回 [(字段, 旧值, 新值)]。字段新出现或消失也算。"""
+    out = []
+    for k in sorted(set(old) | set(new)):
+        a, b = old.get(k, MISSING), new.get(k, MISSING)
+        if a is MISSING and b is MISSING:
+            continue
+        if (a is MISSING) != (b is MISSING) or a != b:
+            out.append((k, show_value(a), show_value(b)))
+    return out
+
+
+def base_field(field):
+    """'skuSpecValues[0].specValue' -> 'skuSpecValues'，用来判断是不是要推送的字段"""
+    return re.split(r"[.\[]", field, maxsplit=1)[0]
+
 
 def describe_change(field, old, new):
     """把一个变化翻译成好懂的文字，用于终端和推送。"""
@@ -893,14 +980,15 @@ def parse_updated_time(value):
 # 商品列表接口（看 updatedTime 有没有变化）
 # ============================================================
 
-def fetch_list(goods_ids, token):
-    """请求一次商品列表接口。成功返回 {goodsId: 记录}，失败返回 (kind, 说明)。"""
+def fetch_list(goods_ids, token, sort_field=0):
+    """请求一次商品列表接口。成功返回 ("ok", {goodsId: 记录})，字典的顺序就是接口返回的顺序；
+    失败返回 (kind, 说明)。"""
     headers = dict(BASE_HEADERS)
     headers["Content-Type"] = "application/json"
     if token:
         headers["Authorization"] = "Bearer " + token
     payload = {"goodsIds": [int(g) if str(g).isdigit() else g for g in goods_ids],
-               "pageNum": 1, "pageSize": max(10, len(goods_ids)), "sortType": 1, "sortFieldType": 0}
+               "pageNum": 1, "pageSize": max(10, len(goods_ids)), "sortType": 0, "sortFieldType": sort_field}
     try:
         resp = requests.post(LIST_URL, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
     except requests.Timeout:
@@ -933,14 +1021,24 @@ def check_list(config, state):
     interval = LIST_INTERVAL_BUSY if busy else LIST_INTERVAL_NORMAL
     lst["next_due"] = time_now() + interval
 
-    kind, result = fetch_list(list(state["goods"]), config["token"])
-    if kind != "ok":
-        log_error(f"[商品列表] 请求失败：{result}")
-        if kind == "ratelimit":
-            state["rl_until"] = time_now() + RATE_LIMIT_SLOWDOWN
-        return
-
+    goods_ids = list(state["goods"])
+    results = {}
+    for sort_field, _ in SORTS:
+        kind, res = fetch_list(goods_ids, config["token"], sort_field)
+        if kind != "ok":
+            log_error(f"[商品列表·排序{sort_field}] 请求失败：{res}")
+            if kind == "ratelimit":
+                state["rl_until"] = time_now() + RATE_LIMIT_SLOWDOWN
+                break
+            continue
+        results[sort_field] = res
     now_local = now_beijing()
+    record_rankings(state, results, now_local)
+    if 0 not in results:
+        return
+    result = results[0]
+    record_list_fields(state, result, now_local)
+
     server_now = state["clock"].now()
     for gid, gs in state["goods"].items():
         rec = result.get(gid)
@@ -970,6 +1068,104 @@ def check_list(config, state):
                   f"updatedTime {old['text'][11:]} → {new_text[11:]}\n列表 stock={rec.get('stock')}"
                   + (f"\n附近的回流：{'、'.join(near)}" if near else ""))
     lst["last_local"] = now_local
+
+
+def record_rankings(state, results, now_local):
+    """记录每种排序下商品的先后顺序，顺序一变就写进 rankings.csv。"""
+    lst = state["list"]
+    lst.setdefault("orders", {})
+    names = {gid: short_goods_name(rec.get("name") or "")[:12]
+             for res in results.values() for gid, rec in res.items()}
+    for sort_field, meaning in SORTS:
+        if sort_field not in results:
+            continue
+        order = list(results[sort_field])
+        if len(order) < 2:
+            continue   # 只有一个商品，没有先后可言
+        old = lst["orders"].get(sort_field)
+        if old is not None and old["order"] == order:
+            continue
+        lst["orders"][sort_field] = {"order": order, "local": now_local}
+        if old is None or set(old["order"]) != set(order):
+            note = "启动基准" if old is None else "商品数量变了，重新作为基准"
+            old_text = ""
+        else:
+            moves = []
+            for i, gid in enumerate(order):
+                j = old["order"].index(gid)
+                if i != j:
+                    arrow = "↑" if i < j else "↓"
+                    moves.append(f"{gid} {names.get(gid, '')} 第{j + 1}→第{i + 1}{arrow}")
+            note = "；".join(moves)
+            old_text = " > ".join(old["order"])
+            print(f"{YELLOW}★ 排名变化（排序{sort_field}：{meaning}）：{note}{RESET}")
+        append_csv("rankings.csv", RANKING_HEADER, [[
+            now_local, sort_field, meaning, old["local"] if old else "", old_text, " > ".join(order), note]])
+
+
+def record_list_fields(state, result, now_local):
+    """商品列表接口里每个商品的全部字段，任何一个变了都写进 changes.csv。"""
+    lst = state["list"]
+    lst.setdefault("flat", {})
+    rows = []
+    for gid, rec in result.items():
+        fl = flatten(rec)
+        old = lst["flat"].get(gid)
+        lst["flat"][gid] = fl
+        if old is None:
+            continue
+        for f, a, b in diff_flat(old, fl):
+            rows.append([now_local, "", lst.get("last_local", ""), "", "商品列表", gid,
+                         rec.get("name") or "", "", "（商品）", f, a, b])
+    if rows:
+        append_csv("changes.csv", CHANGE_HEADER, rows)
+        print("  列表字段变化 " + "；".join(f"[{r[5]}] {r[9]} {r[10]} → {r[11]}" for r in rows[:10]))
+
+
+# ============================================================
+# 自动发现新商品
+# ============================================================
+
+def check_discover(config, state):
+    """查一段商品编号（从监控的最小编号到“已知最大编号 + ahead”），发现新商品就提醒，并可自动开始监控。"""
+    disc = state["discover"]
+    dcfg = config["discover"]
+    disc["next_due"] = time_now() + dcfg["interval_seconds"]
+    numeric = [int(g) for g in list(state["goods"]) + list(disc["known"] or []) if str(g).isdigit()]
+    if not numeric:
+        return
+    hi = max(numeric) + dcfg["ahead"]
+    lo = max(min(int(g) for g in state["goods"] if str(g).isdigit()) if any(
+        str(g).isdigit() for g in state["goods"]) else hi - 200, hi - 200)
+    ids = [str(i) for i in range(lo, hi + 1)]
+    kind, res = fetch_list(ids, config["token"])
+    if kind != "ok":
+        log_error(f"[自动发现] 请求失败：{res}")
+        if kind == "ratelimit":
+            state["rl_until"] = time_now() + RATE_LIMIT_SLOWDOWN
+        return
+    if disc["known"] is None:
+        disc["known"] = set(res)          # 第一次查询只作为基准
+        print(f"{CYAN}[自动发现] 已知商品编号 {lo}～{hi} 范围内共 {len(res)} 个，最大 {max(res, key=int) if res else '无'}；"
+              f"之后每 {dcfg['interval_seconds']:g} 秒检查一次新商品。{RESET}")
+        return
+    now_local = now_beijing()
+    for gid, rec in res.items():
+        if gid in disc["known"]:
+            continue
+        disc["known"].add(gid)
+        name = rec.get("name") or ""
+        added = dcfg["auto_add"] and gid not in state["goods"]
+        if added:
+            gs = new_goods_state({"id": gid, "sale_time": None, "sale_ts": None})
+            state["goods"][gid] = gs
+        append_csv("new_goods.csv", NEW_GOODS_HEADER, [[
+            now_local, gid, name, rec.get("sellPrice"), rec.get("stock"), rec.get("startSelling"),
+            rec.get("sellStartTime"), rec.get("updatedTime"), "是" if added else "否"]])
+        print(f"{YELLOW}{'★' * 3} 发现新商品！{gid} {name}（价格 {rec.get('sellPrice')}，"
+              f"startSelling={rec.get('startSelling')}）{'，已自动开始监控' if added else ''}{RESET}")
+        bark_push(config, "发现新商品", f"{gid} {short_goods_name(name)}\n价格 {rec.get('sellPrice')}"
+                  + ("\n已自动开始监控" if added else ""), urgent=True)
 
 
 # ============================================================
@@ -1167,28 +1363,33 @@ def handle_success(gs, result, config, state):
     if gs["summary_dirty"]:
         write_summary(gs, config, state)
 
-    # ---- 3. 和上一次成功的结果比较（第一版的字段变化记录，保留） ----
+    # ---- 3. 和上一次成功的结果比较：所有字段都比（商品层面 + 每个款） ----
     prev = gs["last"]
-    changes = []   # (skuId, skuName, 字段, 旧值, 新值)
+    flat_now = {"goods": flatten(data),
+                "skus": {str(sku.get("id")): flatten(sku) for sku in data["goodsSkuList"] if isinstance(sku, dict)}}
+    changes = []   # (skuId, skuName, 字段, 旧值, 新值)；商品层面的 skuId 为空
     if prev is None:
         print(f"{CYAN}[{goods_id}] 启动后的第一次成功请求，作为基准，不算变化。{RESET}")
         save_raw_json(goods_id, result["body"], "baseline")
     else:
-        old_skus = prev["skus"]
-        for sku_id, info in current.items():
-            if sku_id not in old_skus:
-                changes.append((sku_id, info["skuName"], "sku", "（无）", "新出现"))
+        old_flat = gs["flat"]
+        for f, a, b in diff_flat(old_flat["goods"], flat_now["goods"]):
+            changes.append(("", "（商品）", f, a, b))
+        for sku_id, fl in flat_now["skus"].items():
+            name = current.get(sku_id, {}).get("skuName", "")
+            if sku_id not in old_flat["skus"]:
+                changes.append((sku_id, name, "（整个款）", "（无）", "新出现"))
                 continue
-            for f in WATCH_FIELDS:
-                old_v, new_v = old_skus[sku_id].get(f), info.get(f)
-                if old_v != new_v:
-                    changes.append((sku_id, info["skuName"], f, old_v, new_v))
-        for sku_id, info in old_skus.items():
-            if sku_id not in current:
-                changes.append((sku_id, info["skuName"], "sku", "存在", "消失"))
+            for f, a, b in diff_flat(old_flat["skus"][sku_id], fl):
+                changes.append((sku_id, name, f, a, b))
+        for sku_id in old_flat["skus"]:
+            if sku_id not in flat_now["skus"]:
+                name = prev["skus"].get(sku_id, {}).get("skuName", "")
+                changes.append((sku_id, name, "（整个款）", "存在", "消失"))
+    gs["flat"] = flat_now
 
     if changes:
-        event_rows = [[recv_local, server_time, prev["local"], prev["server"],
+        event_rows = [[recv_local, server_time, prev["local"], prev["server"], "款式接口",
                        goods_id, goods_name, sid, sname, f, old_v, new_v]
                       for (sid, sname, f, old_v, new_v) in changes]
         append_csv("changes.csv", CHANGE_HEADER, event_rows)
@@ -1197,16 +1398,18 @@ def handle_success(gs, result, config, state):
         # 字段变化只打一行（售罄 / 回流事件已经在上面醒目地打印过了）
         print(f"  字段变化 [{goods_id}] " + "；".join(
             f"{short_sku_name(sname)} {describe_change(f, old_v, new_v)}"
-            for (sid, sname, f, old_v, new_v) in changes))
+            for (sid, sname, f, old_v, new_v) in changes[:12])
+            + (f" …共 {len(changes)} 项" if len(changes) > 12 else ""))
 
+        # 推送：可能和销量有关的字段变化、新出现的字段、款式增减
         push_lines = [f"{short_sku_name(sname)}：{describe_change(f, old_v, new_v)}"
                       for (sid, sname, f, old_v, new_v) in changes
-                      if f in ("hotSell", "sellOut", "sku")]
+                      if base_field(f) in SALES_HINT_FIELDS or old_v == MISSING or f == "（整个款）"]
         if push_lines:
-            title = "回流！" if any(f == "sellOut" and str(n) == "0"
-                                   for (_, _, f, _, n) in changes) else "状态变化"
+            new_fields = any(old_v == MISSING for (_, _, _, old_v, _) in changes)
+            title = "出现新字段" if new_fields else "状态变化"
             bark_push(config, f"{title} {short_goods_name(goods_name)}",
-                      "\n".join(push_lines) + f"\n{server_time}")
+                      "\n".join(push_lines[:8]) + f"\n{server_time}")
 
     # ---- 4. stock 出现 0 和 999 以外的值：立刻推送（同一个值只推一次） ----
     for sku_id, info in current.items():
@@ -1302,8 +1505,15 @@ def run_due(config, state):
         except Exception:
             log_error("程序内部错误（商品列表）：\n" + traceback.format_exc())
         return 0
+    if state["discover"]["next_due"] <= time_now():
+        try:
+            check_discover(config, state)
+        except Exception:
+            log_error("程序内部错误（自动发现）：\n" + traceback.format_exc())
+            state["discover"]["next_due"] = time_now() + 60
+        return 0
     gs = min(state["goods"].values(), key=lambda g: g["next_due"])
-    wait = min(gs["next_due"], state["list"]["next_due"]) - time_now()
+    wait = min(gs["next_due"], state["list"]["next_due"], state["discover"]["next_due"]) - time_now()
     if wait > 0:
         return wait
     if gs["next_due"] > time_now():
